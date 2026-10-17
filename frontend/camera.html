@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1419">
+<title>Cámara · Monitor de mesas</title>
+<style>
+  :root { --bg:#0f1419; --card:#18202a; --line:#2a3644; --text:#e6edf3; --mut:#8b98a7;
+          --ok:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#2f81f7; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--text);
+              font:16px/1.4 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:560px; margin:0 auto; padding:max(12px,env(safe-area-inset-top)) 14px 24px; }
+  h1 { font-size:18px; margin:6px 0 12px; }
+  .video { position:relative; background:#000; border-radius:14px; overflow:hidden; aspect-ratio:3/4;
+           border:1px solid var(--line); }
+  video { width:100%; height:100%; object-fit:cover; display:block; }
+  .live { position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); border-radius:999px;
+          padding:4px 10px; font-size:13px; display:none; align-items:center; gap:6px; }
+  .live.on { display:flex; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--bad); animation:blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity:.25; } }
+  .placeholder { position:absolute; inset:0; display:grid; place-items:center; color:var(--mut);
+                 text-align:center; padding:20px; }
+  button.main { width:100%; margin-top:14px; padding:16px; font-size:18px; font-weight:600; border:0;
+                border-radius:12px; color:#fff; background:var(--accent); }
+  button.main.stop { background:var(--bad); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .pill { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:6px 12px;
+          font-size:13px; color:var(--mut); }
+  .pill b { color:var(--text); font-weight:600; }
+  .pill.ok b { color:var(--ok); } .pill.bad b { color:var(--bad); } .pill.warn b { color:var(--warn); }
+  .msg { margin-top:12px; padding:12px; border-radius:10px; background:#3b1f1f; border:1px solid #6e2b2b;
+         display:none; font-size:14px; }
+  .msg.show { display:block; }
+  details { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
+  summary { cursor:pointer; font-weight:600; }
+  label { display:block; margin-top:12px; font-size:13px; color:var(--mut); }
+  select, input[type=range] { width:100%; margin-top:4px; font-size:16px; padding:8px; border-radius:8px;
+          border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  input[type=range] { padding:0; }
+  .tip { margin-top:14px; font-size:13px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📷 Cámara de la mesa</h1>
+
+  <div class="video">
+    <video id="video" autoplay muted playsinline></video>
+    <div class="placeholder" id="placeholder">Pulsa “Iniciar transmisión”<br>y apunta el iPhone hacia la mesa</div>
+    <div class="live" id="live"><span class="dot"></span> EN VIVO</div>
+  </div>
+
+  <button class="main" id="toggle">Iniciar transmisión</button>
+
+  <div class="row">
+    <span class="pill" id="pCam">Cámara: <b>apagada</b></span>
+    <span class="pill" id="pNet">Servidor: <b>—</b></span>
+    <span class="pill" id="pTr">Transporte: <b>—</b></span>
+    <span class="pill">Enviados: <b id="sent">0</b></span>
+    <span class="pill">FPS: <b id="fps">0</b></span>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <details>
+    <summary>Ajustes</summary>
+    <label>Cámara
+      <select id="facing">
+        <option value="environment">Trasera</option>
+        <option value="user">Frontal</option>
+      </select>
+    </label>
+    <label>Ancho de imagen enviada
+      <select id="width">
+        <option value="480">480 px (ligero)</option>
+        <option value="640" selected>640 px (recomendado)</option>
+        <option value="800">800 px (más detalle)</option>
+      </select>
+    </label>
+    <label>Fotogramas por segundo: <span id="fpsVal">3</span>
+      <input type="range" id="fpsSet" min="1" max="10" value="3">
+    </label>
+    <label>Calidad JPEG: <span id="qVal">0.6</span>
+      <input type="range" id="qSet" min="0.3" max="0.9" step="0.05" value="0.6">
+    </label>
+  </details>
+
+  <p class="tip">Mantén esta pestaña abierta y la pantalla encendida (Safari pausa el envío si se bloquea el
+    iPhone). Apoya el teléfono en un soporte y conéctalo al cargador.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+
+let stream = null, ws = null, timer = null, statTimer = null, wakeLock = null;
+let wantRun = false, encoding = false, sent = 0, sentLastSec = 0;
+let wsFails = 0, useHttp = false, reconnectTimer = null;
+
+// ---------- ajustes persistentes (try/catch: localStorage puede fallar en modo privado)
+const SETTINGS = ['facing', 'width', 'fpsSet', 'qSet'];
+function loadSettings() {
+  try { const s = JSON.parse(localStorage.getItem('cam-settings') || '{}');
+        SETTINGS.forEach(k => { if (s[k] != null) $(k).value = s[k]; }); } catch (e) {}
+  syncLabels();
+}
+function saveSettings() {
+  try { const s = {}; SETTINGS.forEach(k => s[k] = $(k).value);
+        localStorage.setItem('cam-settings', JSON.stringify(s)); } catch (e) {}
+}
+function syncLabels() { $('fpsVal').textContent = $('fpsSet').value; $('qVal').textContent = $('qSet').value; }
+
+// ---------- UI helpers
+function pill(id, text, cls) {
+  const el = $(id); el.className = 'pill ' + (cls || '');
+  el.innerHTML = el.innerHTML.split(':')[0] + ': <b>' + text + '</b>';
+}
+function showMsg(text) { const m = $('msg'); m.textContent = text || ''; m.classList.toggle('show', !!text); }
+
+// ---------- cámara
+async function startCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('El navegador no permite usar la cámara en esta página. Safari exige HTTPS: abre esta ' +
+      'página con https:// (ejecuta make_cert.py en la PC y reinicia el servidor).');
+  }
+  stopStream();
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: $('facing').value }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video.srcObject = stream;
+  await video.play();
+  $('placeholder').style.display = 'none';
+  pill('pCam', 'activa', 'ok');
+}
+function stopStream() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+}
+
+// ---------- red: WebSocket con reconexión + alternativa HTTP POST
+function wsUrl() { return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/camera'; }
+
+function connect() {
+  if (!wantRun || useHttp) return;
+  pill('pNet', 'conectando…', 'warn'); pill('pTr', 'WebSocket', '');
+  let opened = false;
+  try { ws = new WebSocket(wsUrl()); } catch (e) { onWsFail(); return; }
+  ws.onopen = () => { opened = true; wsFails = 0; pill('pNet', 'conectado', 'ok'); showMsg(''); };
+  ws.onclose = () => { ws = null; if (!wantRun) return;
+                       if (!opened) onWsFail(); else { pill('pNet', 'reconectando…', 'warn'); scheduleReconnect(); } };
+  ws.onerror = () => {};
+}
+function onWsFail() {
+  wsFails++;
+  if (wsFails >= 3) {            // iOS a veces rechaza wss:// con certificado autofirmado
+    useHttp = true;
+    pill('pTr', 'HTTP POST', 'warn'); pill('pNet', 'activo (HTTP)', 'ok');
+    showMsg('El WebSocket seguro no conectó (típico en iOS con certificado autofirmado). ' +
+            'Se usa el envío por HTTP, que funciona igual.');
+    return;
+  }
+  pill('pNet', 'reintentando…', 'bad'); scheduleReconnect();
+}
+function scheduleReconnect() { clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 1500); }
+
+// ---------- envío de fotogramas
+function sendFrame() {
+  if (!wantRun || encoding || !video.videoWidth) return;
+  if (!useHttp && (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 512 * 1024)) return;
+
+  const w = Math.min(parseInt($('width').value, 10), video.videoWidth);
+  const h = Math.round(w * video.videoHeight / video.videoWidth);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  ctx.drawImage(video, 0, 0, w, h);
+
+  encoding = true;
+  canvas.toBlob(blob => {
+    encoding = false;
+    if (!blob || !wantRun) return;
+    if (useHttp) {
+      fetch('/api/frame', { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } })
+        .then(r => { if (r.ok) { sent++; sentLastSec++; } }).catch(() => {});
+    } else if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(blob); sent++; sentLastSec++;
+    }
+  }, 'image/jpeg', parseFloat($('qSet').value));
+}
+function startLoop() {
+  clearInterval(timer);
+  timer = setInterval(sendFrame, 1000 / parseInt($('fpsSet').value, 10));
+}
+
+// ---------- pantalla siempre encendida
+async function requestWakeLock() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+
+// ---------- start / stop
+async function start() {
+  showMsg(''); wantRun = true; useHttp = false; wsFails = 0;
+  try { await startCamera(); }
+  catch (e) { wantRun = false; pill('pCam', 'error', 'bad');
+              showMsg(e.name === 'NotAllowedError' ? 'Permiso de cámara denegado. Actívalo en Ajustes › Safari › Cámara.'
+                                                   : e.message || String(e)); return; }
+  $('toggle').textContent = 'Detener transmisión'; $('toggle').classList.add('stop');
+  $('live').classList.add('on');
+  connect(); startLoop(); requestWakeLock();
+  statTimer = setInterval(() => { $('fps').textContent = sentLastSec; sentLastSec = 0; $('sent').textContent = sent; }, 1000);
+}
+function stop() {
+  wantRun = false; clearInterval(timer); clearInterval(statTimer); clearTimeout(reconnectTimer);
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  stopStream();
+  if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+  $('placeholder').style.display = ''; $('live').classList.remove('on');
+  $('toggle').textContent = 'Iniciar transmisión'; $('toggle').classList.remove('stop');
+  pill('pCam', 'apagada', ''); pill('pNet', '—', ''); pill('pTr', '—', ''); $('fps').textContent = '0';
+}
+
+$('toggle').onclick = () => wantRun ? stop() : start();
+$('facing').onchange = async () => { saveSettings(); if (wantRun) { try { await startCamera(); } catch (e) { showMsg(e.message); } } };
+$('width').onchange = saveSettings;
+$('fpsSet').oninput = () => { syncLabels(); saveSettings(); if (wantRun) startLoop(); };
+$('qSet').oninput = () => { syncLabels(); saveSettings(); };
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && wantRun) {
+    requestWakeLock();
+    if (!useHttp && (!ws || ws.readyState > 1)) connect();
+  }
+});
+loadSettings();
+</script>
+</body>
+</html>

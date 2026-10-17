@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · Monitor de mesas</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --card2:#1c232d; --line:#2b3441; --text:#e6edf3; --mut:#8b98a7;
+          --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --idle:#6e7781; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--text);
+              font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  .chip { display:inline-flex; align-items:center; gap:7px; background:var(--card); border:1px solid var(--line);
+          border-radius:999px; padding:4px 12px; font-size:13px; color:var(--mut); }
+  .chip i { width:9px; height:9px; border-radius:50%; background:var(--idle); display:inline-block; }
+  .chip.ok i { background:var(--ok); } .chip.bad i { background:var(--bad); } .chip.warn i { background:var(--warn); }
+  button { font:inherit; color:var(--text); background:var(--card2); border:1px solid var(--line); border-radius:8px;
+           padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:var(--info); }
+
+  /* Banner de alerta */
+  #alert { display:none; margin:16px 22px 0; padding:16px 20px; border-radius:12px; font-size:18px; font-weight:600;
+           align-items:center; gap:14px; animation:pulse 1.4s infinite; }
+  #alert.show { display:flex; }
+  #alert.limpieza { background:#3d1417; border:2px solid var(--bad); }
+  #alert.atencion { background:#3a2a0b; border:2px solid var(--warn); }
+  #alert .ico { font-size:30px; }
+  #alert small { display:block; font-weight:400; color:#d0d7de; font-size:14px; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 6px rgba(248,81,73,.18); } }
+
+  main { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr); gap:18px; padding:18px 22px 28px; }
+  @media (max-width:980px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); }
+
+  .videobox { position:relative; background:#000; border-radius:8px; overflow:hidden; aspect-ratio:4/3; }
+  .videobox img { width:100%; height:100%; object-fit:contain; display:block; }
+  .nosig { position:absolute; inset:0; display:grid; place-items:center; text-align:center; color:var(--mut); padding:20px; }
+
+  .state { border-radius:12px; padding:18px; border:2px solid var(--line); transition:background .3s,border-color .3s; }
+  .state.ok { background:#10261a; border-color:var(--ok); }
+  .state.idle { background:var(--card2); border-color:var(--idle); }
+  .state.warn { background:#2e230a; border-color:var(--warn); }
+  .state.bad { background:#34130f; border-color:var(--bad); }
+  .state .num { font-size:13px; color:var(--mut); }
+  .state .name { font-size:26px; font-weight:700; margin:2px 0 4px; }
+  .state .desc { color:#c9d1d9; }
+  .kv { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+  .kv div { background:rgba(255,255,255,.04); border-radius:8px; padding:8px 12px; }
+  .kv span { display:block; font-size:12px; color:var(--mut); }
+  .kv b { font-size:17px; }
+  .bar { height:8px; background:rgba(255,255,255,.08); border-radius:99px; overflow:hidden; margin-top:14px; }
+  .bar > div { height:100%; width:0; background:var(--warn); transition:width .3s linear; }
+  .barlbl { font-size:12px; color:var(--mut); margin-top:6px; min-height:18px; }
+
+  .legend { display:grid; gap:8px; }
+  .legend .it { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border-radius:8px; border:1px solid transparent; opacity:.55; }
+  .legend .it.active { opacity:1; background:var(--card2); border-color:var(--line); }
+  .legend .n { width:22px; height:22px; border-radius:50%; background:var(--idle); display:grid; place-items:center; font-size:12px; font-weight:700; flex:none; }
+  .legend .it small { display:block; color:var(--mut); }
+
+  #log { list-style:none; margin:0; padding:0; max-height:300px; overflow:auto; }
+  #log li { padding:8px 10px; border-left:3px solid var(--line); margin-bottom:6px; background:var(--card2); border-radius:0 8px 8px 0; font-size:14px; }
+  #log li.alert { border-color:var(--bad); background:#2a1517; }
+  #log li.alert.atencion { border-color:var(--warn); background:#2b220e; }
+  #log li.alert_resolved { border-color:var(--ok); }
+  #log li.state_change { border-color:var(--info); }
+  #log time { color:var(--mut); font-size:12px; margin-right:8px; }
+  .empty { color:var(--mut); font-size:14px; }
+
+  .cfg { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
+  .cfg input { width:90px; padding:6px 8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; color:var(--text); font:inherit; }
+  .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .stack { display:grid; gap:18px; align-content:start; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍽️ Monitor de mesas</h1>
+  <span class="chip" id="cWs"><i></i><span>Servidor: —</span></span>
+  <span class="chip" id="cCam"><i></i><span>Cámara: sin señal</span></span>
+  <span class="chip" id="cDet"><i></i><span>Detector: —</span></span>
+  <span class="chip"><i></i><span id="cFps">0 fps</span></span>
+  <button id="btnSound" title="Activa el sonido de alerta (el navegador necesita un clic previo)">🔇 Sonido: apagado</button>
+</header>
+
+<div id="alert"><span class="ico">⚠️</span><div><span id="alertTitle"></span><small id="alertSub"></small></div></div>
+
+<main>
+  <section class="stack">
+    <div class="card">
+      <h2>Video procesado en tiempo real</h2>
+      <div class="videobox">
+        <img id="frame" alt="">
+        <div class="nosig" id="nosig">Esperando señal de la cámara…<br>Abre <b>/camera</b> en el iPhone y pulsa “Iniciar transmisión”.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Registro de eventos y alertas</h2>
+      <ul id="log"></ul>
+      <div class="empty" id="logEmpty">Sin eventos todavía.</div>
+    </div>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <h2>Estado actual de la mesa</h2>
+      <div class="state idle" id="state">
+        <div class="num" id="stNum">Estado —</div>
+        <div class="name" id="stName">Sin datos</div>
+        <div class="desc" id="stDesc">Esperando la primera detección.</div>
+        <div class="kv">
+          <div><span>Personas</span><b id="kvPeople">—</b></div>
+          <div><span>Platos</span><b id="kvPlates">—</b></div>
+          <div><span>Tiempo en este estado</span><b id="kvTime">00:00</b></div>
+          <div><span>Siguiente alerta en</span><b id="kvNext">—</b></div>
+        </div>
+        <div class="bar"><div id="barFill"></div></div>
+        <div class="barlbl" id="barLbl"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Los 4 estados</h2>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="card">
+      <h2>Configuración de alertas (segundos)</h2>
+      <div class="cfg">
+        <label for="cfgDirty">Limpieza: mesa con restos durante</label><input id="cfgDirty" type="number" min="1" step="1">
+        <label for="cfgWait">Atención: clientes sin comida durante</label><input id="cfgWait" type="number" min="1" step="1">
+        <label for="cfgDeb">Estabilidad para cambiar de estado</label><input id="cfgDeb" type="number" min="0" step="0.5">
+      </div>
+      <div class="actions">
+        <button id="btnApply">Aplicar</button>
+        <button id="btnReset">Reiniciar mesa</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SEV_CLASS = { ok: 'ok', warn: 'warn' };
+const STATE_COLORS = { vacia: 'idle', con_restos: 'bad', sentados_sin_comida: 'warn', comiendo: 'ok' };
+const NUM_COLORS = { vacia: 'var(--idle)', con_restos: 'var(--bad)', sentados_sin_comida: 'var(--warn)', comiendo: 'var(--ok)' };
+
+let ws, states = [], lastSnap = null, snapAt = 0, lastFrameAt = 0, soundOn = false, audioCtx = null;
+
+// ---------------- conexión
+function connect() {
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/dashboard';
+  ws = new WebSocket(url);
+  ws.onopen  = () => chip('cWs', 'ok', 'Servidor: conectado');
+  ws.onclose = () => { chip('cWs', 'bad', 'Servidor: reconectando…'); setTimeout(connect, 1500); };
+  ws.onerror = () => {};
+  ws.onmessage = e => handle(JSON.parse(e.data));
+}
+function chip(id, cls, text) { const el = $(id); el.className = 'chip ' + cls; el.lastElementChild.textContent = text; }
+
+function handle(m) {
+  if (m.type === 'init') {
+    states = m.states; buildLegend(); fillConfig(m.config);
+    chip('cDet', 'ok', 'Detector: ' + m.detector);
+    $('log').innerHTML = ''; m.events.forEach(ev => addEvent(ev, false)); updateLogEmpty();
+    renderState(m.state);
+  } else if (m.type === 'frame') {
+    lastFrameAt = Date.now();
+    $('frame').src = 'data:image/jpeg;base64,' + m.frame; $('nosig').style.display = 'none';
+    $('cFps').textContent = m.fps + ' fps';
+    $('kvPeople').textContent = m.detection.personas ? 'Sí (' + m.detection.n_personas + ')' : 'No';
+    $('kvPlates').textContent = ({ ninguno: 'Ninguno', vacios: 'Vacíos', con_comida: 'Con comida' })[m.detection.platos];
+    renderState(m.state);
+    m.events.forEach(ev => addEvent(ev, true));
+  } else if (m.type === 'config') {
+    fillConfig(m.config);
+  } else if (m.type === 'reset') {
+    $('log').innerHTML = ''; updateLogEmpty(); renderState(m.state);
+  }
+}
+
+// ---------------- estado
+function buildLegend() {
+  $('legend').innerHTML = states.map(s =>
+    `<div class="it" data-k="${s.key}"><div class="n" style="background:${NUM_COLORS[s.key]}">${s.id}</div>
+     <div><b>${s.label}</b><small>${s.description}</small></div></div>`).join('');
+}
+function renderState(s) {
+  lastSnap = s; snapAt = Date.now();
+  const alerting = !!s.alert;
+  const el = $('state');
+  el.className = 'state ' + (alerting ? (s.alert.kind === 'limpieza' ? 'bad' : 'warn') : STATE_COLORS[s.state]);
+  $('stNum').textContent = 'Estado ' + s.state_id + ' de 4' + (s.pending_state ? '  ·  cambiando…' : '');
+  $('stName').textContent = s.label; $('stDesc').textContent = s.description;
+  document.querySelectorAll('.legend .it').forEach(n => n.classList.toggle('active', n.dataset.k === s.state));
+
+  const banner = $('alert');
+  if (alerting) {
+    banner.className = 'show ' + s.alert.kind;
+    $('alertTitle').textContent = s.alert.kind === 'limpieza' ? 'LIMPIEZA NECESARIA' : 'ATENCIÓN AL CLIENTE NECESARIA';
+    $('alertSub').textContent = s.alert.message;
+  } else banner.className = '';
+  tick();
+}
+function fmt(sec) { sec = Math.max(0, Math.floor(sec)); return String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0'); }
+function tick() {                                    // interpola el cronómetro entre mensajes
+  const age = Date.now() - lastFrameAt;
+  const live = lastFrameAt && age < 4000;
+  chip('cCam', live ? 'ok' : 'bad', live ? 'Cámara: en vivo' : 'Cámara: sin señal');
+  if (!live && lastFrameAt) $('nosig').style.display = 'grid';
+  if (!lastSnap) return;
+  const extra = live ? (Date.now() - snapAt) / 1000 : 0;
+  const elapsed = lastSnap.seconds_in_state + extra;
+  $('kvTime').textContent = fmt(elapsed);
+  const thr = lastSnap.alert_threshold;
+  if (thr == null) { $('kvNext').textContent = 'No aplica'; $('barFill').style.width = '0'; $('barLbl').textContent = ''; }
+  else if (lastSnap.alert) { $('kvNext').textContent = 'ALERTA activa'; $('barFill').style.width = '100%'; $('barFill').style.background = 'var(--bad)'; $('barLbl').textContent = 'Umbral de ' + fmt(thr) + ' superado'; }
+  else { const left = Math.max(0, thr - elapsed); $('kvNext').textContent = fmt(left);
+         $('barFill').style.width = Math.min(100, elapsed / thr * 100) + '%'; $('barFill').style.background = 'var(--warn)';
+         $('barLbl').textContent = 'Alerta a los ' + fmt(thr); }
+}
+setInterval(tick, 250);
+
+// ---------------- registro de eventos
+function addEvent(ev, live) {
+  const li = document.createElement('li');
+  li.className = ev.type + (ev.kind ? ' ' + ev.kind : '');
+  const t = new Date(ev.ts).toLocaleTimeString();
+  li.innerHTML = `<time>${t}</time>${ev.type === 'alert' ? '🚨 ' : ev.type === 'alert_resolved' ? '✅ ' : ''}${ev.message}`;
+  $('log').prepend(li); updateLogEmpty();
+  if (live && ev.type === 'alert') beep();
+}
+function updateLogEmpty() { $('logEmpty').style.display = $('log').children.length ? 'none' : 'block'; }
+
+// ---------------- sonido
+$('btnSound').onclick = () => {
+  soundOn = !soundOn;
+  if (soundOn) { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); beep(); }
+  $('btnSound').textContent = soundOn ? '🔔 Sonido: activo' : '🔇 Sonido: apagado';
+};
+function beep() {
+  if (!soundOn || !audioCtx) return;
+  [0, 0.25, 0.5].forEach(d => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+    const t = audioCtx.currentTime + d; g.gain.setValueAtTime(0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.start(t); o.stop(t + 0.2);
+  });
+}
+
+// ---------------- configuración
+function fillConfig(c) { $('cfgDirty').value = c.dirty_alert_seconds; $('cfgWait').value = c.waiting_alert_seconds; $('cfgDeb').value = c.debounce_seconds; }
+$('btnApply').onclick = async () => {
+  const body = { dirty_alert_seconds: +$('cfgDirty').value, waiting_alert_seconds: +$('cfgWait').value, debounce_seconds: +$('cfgDeb').value };
+  const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) alert('Valores inválidos: ' + (await r.text()));
+};
+$('btnReset').onclick = () => { if (confirm('¿Reiniciar el estado y el registro de la mesa?')) fetch('/api/reset', { method: 'POST' }); };
+
+connect();
+</script>
+</body>
+</html>

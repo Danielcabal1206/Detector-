@@ -1,0 +1,16 @@
+# --- Servidor ---
+fastapi>=0.110
+uvicorn[standard]>=0.27      # incluye 'websockets' (WebSockets nativos de ASGI)
+
+# --- Visión por computador ---
+# OpenCV sin GUI (incluye los clasificadores Haar en cv2.data).
+# IMPORTANTE: serie 4.x. OpenCV 5.0 eliminó CascadeClassifier y HOGDescriptor del paquete
+# principal, que el detector heurístico necesita.
+opencv-python-headless>=4.8,<5
+numpy>=1.24
+
+# --- HTTPS autofirmado (necesario para que el iPhone permita usar la cámara) ---
+cryptography>=41
+
+# --- OPCIONAL: detector YOLO (DETECTOR=yolo). Descomenta para usarlo ---
+# ultralytics>=8.1
